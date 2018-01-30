@@ -6,6 +6,7 @@ import logging
 import multiprocessing
 import pandas as pd
 import glob
+import shutil
 multiprocessing.log_to_stderr(logging.ERROR)
 
 # filenamelist=["%s.csv"%count for count in range(1,5)]
@@ -105,6 +106,7 @@ def sorter(*arg):
         #         f.write(str(i)+","+str(j)+"\n")
 
 def sort_manager(n_core=4,col=[0]):
+    print(n_core)
     p = Pool(n_core)
     p.starmap(sorter, [(file,col) for file in filenamelist])
     print(filenamelist)
@@ -132,12 +134,52 @@ def merge_multi(f1name,f2name,res):
         col_order=[0,1]
         writecsv(compareV(f1,f2,v1,v2,ind,col_order),fname)
         res.append(fname_combine)
+def parseinput(param_file="param.ini"):
+    param_dict={}
+    with open(param_file,"r") as f:
+        for line in f:
+            rowsplit=line.split("=")
+            if line[0]=="#": continue
+            if len(rowsplit)==2:
+                if rowsplit[0]=="RANDOM_FLAG":
+                    assert int(rowsplit[1]) in [0,1]
+                    
+                if rowsplit[0]=="CHUNK_SIZE":
+                    assert int(rowsplit[1]) > 10000
+                    
+                if rowsplit[0]=="N_CORES":
+                    assert int(rowsplit[1]) in range(multiprocessing.cpu_count())
+                    
+                if rowsplit[0]=="SORT_COLUMNS":
+                    rowsplit[1]=[int(i) for i in rowsplit[1].split(",")]
+                if rowsplit[0]=="FILE_INPUT":
+                    rowsplit[1]=rowsplit[1].strip("\n")
+
+                print("Parameter:%s \nValue:%s " % (rowsplit[0],rowsplit[1]))
+                try:
+                    param_dict[rowsplit[0]]=int(rowsplit[1])
+                except:
+                    param_dict[rowsplit[0]]=rowsplit[1]
+    return param_dict
+
+
 
 if __name__ == '__main__':
 
-    random_flag=1
-    file_arg="merge.csv"
-    col=[0,1,2]
+
+    param_dict=parseinput()
+    random_flag=param_dict['RANDOM_FLAG']
+    file_arg=param_dict['FILE_INPUT']
+    n_cores=param_dict['N_CORES']
+    col=param_dict['SORT_COLUMNS']
+    chunk=param_dict['CHUNK_SIZE']
+    clean_temp=param_dict['CLEAN_TEMP']
+
+    # Clean temp folder
+    filenamelist=glob.glob(os.path.join(os.getcwd(),"temp","*.csv"))
+    print(filenamelist)        
+    for fileName in filenamelist:
+        os.remove(fileName)
 
 
     if random_flag==1:
@@ -145,7 +187,7 @@ if __name__ == '__main__':
     start=time.time()
     if len(file_arg.split('.'))>1:   # if the argument is a single file
         bigfile=os.path.join("input",file_arg)
-        filenamelist=split_nfile(bigfile)
+        filenamelist=split_nfile(bigfile,chunksize=chunk)
     else: # if the argument is a directory
         filenamelist=glob.glob(os.path.join(os.getcwd(),"input","*.csv"))
         print(filenamelist)
@@ -156,7 +198,7 @@ if __name__ == '__main__':
 
     start=time.time()     
 
-    resultlist=sort_manager(col)
+    resultlist=sort_manager(n_core=n_cores,col=col)
 
     end=time.time()
     print("Total Run Time: %s s"%(end-start)) 
@@ -167,22 +209,47 @@ if __name__ == '__main__':
     responses = manager.list()
 
     for fname in filenamelist:
-        fn=fname.split("_")[1]
+        try:
+            fn=fname.split("_")[1]
+        except:
+            fn=fname.split(os.path.sep)[-1]
+
         responses.append(fn)
 
     while len(responses) > 1:
         p = []
         while len(responses) > 0:
+
             if len(responses)==1:
                 proc = Process( target=merge_multi, args=(responses.pop(0),0,responses) )
             else:
                 proc = Process( target=merge_multi, args=(responses.pop(0),responses.pop(0),responses) )
             p.append( proc )
             print("Current length: %s"%(len(responses)))
+              
+        
         for proc in p:
                 proc.start()
+
+
         for proc in p:
                 proc.join()
                 proc.terminate()
+        if len(responses)>0:finalfname=responses[-1]        
+
     end=time.time()
+
+
+    if clean_temp==1:
+        
+        filenamelist=glob.glob(os.path.join(os.getcwd(),"temp","*.csv"))
+        shutil.copy(os.path.join(os.getcwd(),"temp",finalfname), os.path.join(os.getcwd(),"output",finalfname))
+        print(filenamelist)        
+        for fileName in filenamelist:
+            os.remove(fileName)
+
+
+
+
+
     print("Total Run Time: %s s"%(end-start))
